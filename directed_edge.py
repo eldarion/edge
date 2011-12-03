@@ -446,7 +446,11 @@ class Exporter(object):
             self.__file.close()
         else:
             self.database.resource.put(self.__data.getvalue(), "add", { "createMissingLinks" : "true" })
-
+    
+    @property
+    def data(self):
+        return self.__data
+     
     def __write(self, data):
         if self.__file:
             self.__file.write(data)

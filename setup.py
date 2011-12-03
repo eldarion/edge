@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name = "edge",
-    version = "0.3.1",
+    version = "0.3.2",
     url = "http://pypi.python.org/pypi/edge",
     license = "BSD",
     description = "Python bindings for Directed Edge's API",
