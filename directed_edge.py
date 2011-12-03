@@ -302,7 +302,6 @@ class Item(object):
 
     def to_xml(self, tags=None, links=None, properties=None, include_document=True):
         """Converts this item to an XML representation.  Only for internal use."""
-
         if not tags:
             tags = self.__tags
         if not links:
@@ -327,7 +326,7 @@ class Item(object):
                 item_element.appendChild(link_element)
                 if type:
                     link_element.setAttribute("type", type)
-                if self.__links[type][link] > 0:
+                if self.__links and self.__links[type][link] > 0:
                     link_element.setAttribute("weight", str(links[type][link]))
                 link_element.appendChild(document.createTextNode(link))
 
@@ -346,15 +345,16 @@ class Item(object):
 
     def save(self):
         """Writes any local changes to the item back to the remote database."""
-
         if self.__cached:
             self.database.resource.put(self.to_xml(), self.id)
         else:
+            # {'': {'user-18': 0}}
+            # {'user-18': 0}
             self.database.resource.put(self.to_xml(), [ self.id, "add" ])
             if self.__links_to_remove or self.__tags_to_remove or self.__properties_to_remove:
                 to_dict = lambda list, default: dict(map(lambda x: [x, default], list))
                 self.database.resource.put(self.to_xml(self.__tags_to_remove,
-                                                       to_dict(self.__links_to_remove, 0),
+                                                       {'': to_dict(self.__links_to_remove, 0)},
                                                        to_dict(self.__properties_to_remove, "")),
                                            [ self.id, "remove" ])
 
