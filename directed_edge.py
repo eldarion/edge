@@ -22,11 +22,11 @@
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import base64
 import urllib
 import urllib2
 import httplib2
 import xml.dom.minidom
-from sets import Set
 
 try:
     import cStringIO as StringIO
@@ -40,7 +40,10 @@ class Resource(object):
         params.setdefault("timeout", 10)
         self.__base_url = base_url
         self.__http = httplib2.Http(timeout = params["timeout"])
+
         if user:
+            auth = base64.encodestring("%s:%s" % (user, password))
+            self.__headers = { "Authorization": ("Basic %s" % auth) }
             self.__http.add_credentials(user, password)
 
     def path(self, sub="", params={}):
@@ -54,13 +57,19 @@ class Resource(object):
         return self.__base_url + quoted + "?" + urllib.urlencode(params)
 
     def get(self, sub="", params={}):
-        response, content = self.__http.request(self.path(sub, params), "GET")
+        response, content = self.__http.request(self.path(sub, params), "GET",
+                                                headers = self.__headers)
         if response["status"] != "200":
             return "<directededge/>"
         return content
 
     def put(self, data, sub="", params={}):
-        response, content = self.__http.request(self.path(sub, params), "PUT", data)
+        response, content = self.__http.request(self.path(sub, params), "PUT", data,
+                                                headers = self.__headers)
+
+    def delete(self, sub=""):
+        response, content = self.__http.request(self.path(sub), "DELETE",
+                                                headers = self.__headers)
 
     def read_list(self, document, element_name):
         values = []
@@ -108,8 +117,8 @@ class Database(object):
         - maxResults (integer)
         - excludeLinked (true / false)"""
 
-        params["items"] = ",".join(Set(items))
-        params["tags"] = ",".join(Set(tags))
+        params["items"] = ",".join(set(items))
+        params["tags"] = ",".join(set(tags))
         params["union"] = "true"
 
         content = self.resource.get("related", params)
@@ -133,12 +142,12 @@ class Item(object):
         self.id = id
 
         self.__links = {}
-        self.__tags = Set()
+        self.__tags = set()
         self.__properties = {}
 
-        self.__links_to_remove = Set()
-        self.__tags_to_remove = Set()
-        self.__properties_to_remove = Set()
+        self.__links_to_remove = set()
+        self.__tags_to_remove = set()
+        self.__properties_to_remove = set()
 
         self.__cached = False
         
@@ -278,7 +287,7 @@ class Item(object):
         - maxResults (integer)
         - excludeLinked (true / false)"""
 
-        params["tags"] = ",".join(Set(tags))
+        params["tags"] = ",".join(set(tags))
         return self.database.resource.read_list(self.__document("related", params), "related")
 
     def recommended(self, tags=[], **params):
@@ -295,13 +304,15 @@ class Item(object):
         - maxResults (integer)
         - excludeLinked (true / false) default true"""
 
-        params["tags"] = ",".join(Set(tags))
+        params["tags"] = ",".join(set(tags))
         if not params.has_key("excludeLinked"):
             params["excludeLinked"] = "true"
-        return self.database.resource.read_list(self.__document("recommended", params), "recommended")
+        return self.database.resource.read_list(self.__document("recommended", params),
+                                                "recommended")
 
     def to_xml(self, tags=None, links=None, properties=None, include_document=True):
         """Converts this item to an XML representation.  Only for internal use."""
+
         if not tags:
             tags = self.__tags
         if not links:
@@ -326,7 +337,7 @@ class Item(object):
                 item_element.appendChild(link_element)
                 if type:
                     link_element.setAttribute("type", type)
-                if self.__links and self.__links[type][link] > 0:
+                if self.__links[type][link] > 0:
                     link_element.setAttribute("weight", str(links[type][link]))
                 link_element.appendChild(document.createTextNode(link))
 
@@ -345,22 +356,28 @@ class Item(object):
 
     def save(self):
         """Writes any local changes to the item back to the remote database."""
+
         if self.__cached:
-            self.database.resource.put(self.to_xml(), self.id)
+            self.database.resource.put(self.to_xml(), [ "items", self.id ])
         else:
-            # {'': {'user-18': 0}}
-            # {'user-18': 0}
-            self.database.resource.put(self.to_xml(), [ self.id, "add" ])
+            self.database.resource.put(self.to_xml(), [ "items", self.id, "add" ])
             if self.__links_to_remove or self.__tags_to_remove or self.__properties_to_remove:
                 to_dict = lambda list, default: dict(map(lambda x: [x, default], list))
-                self.database.resource.put(self.to_xml(self.__tags_to_remove,
-                                                       {'': to_dict(self.__links_to_remove, 0)},
-                                                       to_dict(self.__properties_to_remove, "")),
-                                           [ self.id, "remove" ])
+                self.database.resource.put(self.to_xml(
+                    self.__tags_to_remove,
+                    to_dict(self.__links_to_remove, 0),
+                    to_dict(self.__properties_to_remove, "")),
+                                           [ "items", self.id, "remove" ])
 
                 self.__links_to_remove.clear()
                 self.__tags_to_remove.clear()
                 self.__properties_to_remove.clear()
+
+    def destroy(self):
+        """Destroy this item from the database. All incoming links will also be
+        destroyed."""
+
+        self.database.resource.delete([ "items", self.id ])
 
     def __set_link(self, type, target, weight=0):
         if type not in self.__links:
@@ -394,7 +411,7 @@ class Item(object):
             self.__cached = True
 
     def __document(self, sub="", params={}):
-        content = self.database.resource.get([ self.id, sub ], params)
+        content = self.database.resource.get([ "items", self.id, sub ], params)
         return xml.dom.minidom.parseString(content)
 
 class Exporter(object):
@@ -417,7 +434,7 @@ class Exporter(object):
         elif isinstance(destination, Database):
             self.__database = destination
         else:
-            print "The exporter has to be called on a file name or Database instance."
+            print("The exporter has to be called on a file name or Database instance.")
 
         self.__write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\n")
         self.__write("<directededge version=\"0.1\">\n")
@@ -445,12 +462,9 @@ class Exporter(object):
         if self.__file:
             self.__file.close()
         else:
-            self.database.resource.put(self.__data.getvalue(), "add", { "createMissingLinks" : "true" })
-    
-    @property
-    def data(self):
-        return self.__data
-     
+            self.database.resource.put(self.__data.getvalue(), "add",
+                                       { "createMissingLinks" : "true" })
+
     def __write(self, data):
         if self.__file:
             self.__file.write(data)
